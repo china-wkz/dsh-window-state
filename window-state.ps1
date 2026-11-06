@@ -1,3 +1,9 @@
+# PowerShell fallback for dsh-window-state.
+#
+# The plugin prefers the compiled helper in helper/window-state.cs (about 15 MB,
+# WinEvent hooks plus a heartbeat). This script is started only when the machine
+# has no .NET Framework compiler to build it; it polls instead of hooking but
+# writes the same state file with the same semantics.
 param(
   [Parameter(Mandatory = $true)][string]$StateFile,
   [int]$IntervalMs = 700,

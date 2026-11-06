@@ -31,7 +31,8 @@ new BrowserWindow({ width: 1280, height: 820, minWidth: 520, minHeight: 600, ...
 | --- | --- |
 | 位置 + 尺寸 + 最大化 | 三样一起记，换显示器也能落在合理位置 |
 | 启动即还原 | 辅助进程在窗口显示前后极短时间内套用上次几何，通常看不到“先小后大”的跳变 |
-| 连续记录，不是退出时才存 | 每 700ms 采样一次，改完尺寸立刻落盘；断电、强杀都不会丢 |
+| 连续记录，不是退出时才存 | 移动/缩放/最大化由 WinEvent 钩子即刻写盘，另有 2 秒心跳补漏；断电、强杀都不会丢 |
+| 轻量常驻 | 编译型 helper：约 15MB 内存、空载 CPU 为 0（PowerShell 版约 70MB） |
 | 越界钳制 | 拔掉副屏、改分辨率、缩放比变化后，窗口不会被放到看不见的地方 |
 | 可读的状态文件 | 纯 JSON，随时能看、能改、能删（删掉即重置） |
 | 零系统残留 | 不写注册表、不加开机自启、不装服务；只在你打开 DSH 时存在一个隐藏辅助进程 |
@@ -135,7 +136,7 @@ Get-CimInstance Win32_Process -Filter "Name='powershell.exe'" |
 | --- | --- | --- |
 | `enabled` | `true` | 设 `false` 时完全不启动辅助进程 |
 | `stateFile` | `$DSH_HOME/desktop-window-state.json` | 自定义状态文件位置 |
-| `intervalMs` | `700` | 采样间隔，最小 `200` |
+| `intervalMs` | `2000` | 心跳间隔；窗口事件本身会立即写盘，这个只做兜底，最小 `500` |
 | `exeName` | `DeepSeek Harness.exe` | 目标进程映像名；桌面端改名后可在这里覆盖 |
 | `titleHint` | `DeepSeek Harness` | 窗口标题匹配串，用于在同进程的多个窗口间打分 |
 
@@ -150,7 +151,7 @@ Get-CimInstance Win32_Process -Filter "Name='powershell.exe'" |
 
 ## 工作原理
 
-### 为什么需要一个小小的 PowerShell 辅助进程
+### 为什么需要一个小小的编译型 helper
 
 插件运行在 `dsh-desktop-host` 子进程里——它是桌面外壳 spawn 出来的 Node 进程：
 
@@ -158,24 +159,28 @@ Get-CimInstance Win32_Process -Filter "Name='powershell.exe'" |
 - 桌面外壳没有开放任何“设置窗口尺寸”的 IPC；
 - 预加载脚本暴露的 `dshDesktop` API 里也没有窗口几何相关的方法。
 
-所以 Host 半边只做三件事：判断是不是桌面环境、拉起辅助进程、卸载时收掉它。真正的窗口操作用 Win32 完成，与 DSH 版本解耦。
+所以 Host 半边只做三件事：判断是不是桌面环境、准备并拉起 helper、卸载时收掉它。真正的窗口操作用 Win32 完成，与 DSH 版本解耦。
+
+helper 用 C# 写成（`helper/window-state.cs`），首次运行时由 Host 用 Windows 自带的 .NET Framework 编译器 `csc.exe` 编译一次，产物缓存在 `$DSH_HOME/window-state-helper.exe`；源码有更新会自动重编。这样常驻进程只有约 15MB 内存、空载时 CPU 为 0。机器上找不到 `csc.exe` 时，自动退回 `window-state.ps1`（轮询实现，写同一个状态文件，行为一致，内存约 70MB）。
 
 ### 一次启动的时序
 
 ```text
 Electron 主进程 ──spawn──▶ dsh-desktop-host（插件在这里加载）
                               │
-                              ├─ apply() 启动隐藏的 window-state.ps1
+                              ├─ apply() 编译（仅首次）并启动 window-state-helper.exe
                               │
 Electron 创建主窗口（隐藏，1280×820）
                               │
-辅助进程轮询到窗口 ── SetWindowPos ──▶ 套用上次几何（+ 需要时最大化）
+helper 以 100ms 快轮询到窗口 ── SetWindowPos ──▶ 套用上次几何（+ 需要时最大化）
                               │
 外壳 show()，你看到的就是上次的大小
                               │
-之后每 700ms 采样：位置/尺寸/最大化有变化 → 原子写入状态文件
+安装 WinEvent 钩子（只监听 DSH 进程）
+   移动 / 缩放 / 最大化 / 显示 / 隐藏 ──▶ 立即写状态文件
+   钩子漏掉的 + 每 2 秒心跳 ──▶ 补一次采样
                               │
-窗口消失（退出）或插件卸载 ──▶ 辅助进程结束
+窗口消失（退出）或插件卸载 ──▶ helper 结束
 ```
 
 ### 窗口识别规则
@@ -202,6 +207,7 @@ Electron 创建主窗口（隐藏，1280×820）
 
 - **仅 Windows x64 + DSH Desktop**。CLI、headless、其他平台会直接跳过，不启动任何进程。
 - **安装后需要重启一次**，插件才会被加载。
+- helper 首次运行需要用系统自带的 `csc.exe` 编译一次（约 100–300ms，之后走缓存）；系统缺少编译器时回退到 PowerShell 版。
 - 极慢的机器上，辅助进程可能晚于窗口显示才就绪，会看到一次快速的尺寸调整（不会丢数据）。
 - 只管理**主窗口**。平台登录页、更新弹窗等附属窗口不记录。
 - 依赖桌面外壳当前的进程名与窗口类名；如果未来 DSH 改了这两者，用 `config.exeName` / `config.titleHint` 覆盖即可。
@@ -212,7 +218,7 @@ Electron 创建主窗口（隐藏，1280×820）
 | 现象 | 先看什么 |
 | --- | --- |
 | 重启后窗口没还原 | 插件页开关是否是开；`desktop-window-state.json` 是否存在且 `rect` 合理 |
-| `savedAt` 一直不变 | 辅助进程没起来：确认是桌面版（不是浏览器标签页）、PowerShell 未被安全软件拦截 |
+| `savedAt` 一直不变 | helper 没起来：确认是桌面版（不是浏览器标签页）；系统缺 `csc.exe` 时检查 PowerShell 是否被安全软件拦截 |
 | 窗口跑到屏幕外 | 删掉状态文件重置；加载时会做虚拟屏幕钳制，正常不会出现 |
 | 装完插件列表里没有 | 需要重启 DSH；确认 profile 的 `bundles` 里有 `dsh-window-state` |
 
@@ -232,8 +238,10 @@ Electron 创建主窗口（隐藏，1280×820）
 dsh-window-state/
 ├── package.json         包清单：dsh.bundle.patch、导出表、文件列表
 ├── cordis.patch.yml     插入插件行（id: window-state）
-├── index.js             Host 半边：环境判定、启动/回收辅助进程、配置读取
-├── window-state.ps1     Win32 窗口读写与状态持久化（真正的逻辑）
+├── index.js             Host 半边：环境判定、编译并启动 helper、配置读取
+├── helper/
+│   └── window-state.cs  编译型 helper：WinEvent 钩子 + 心跳 + Win32 窗口读写
+├── window-state.ps1     PowerShell 回退实现（系统没有 csc.exe 时使用）
 ├── locale/
 │   ├── zh.json          插件卡片中文文案
 │   └── en.json

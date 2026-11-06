@@ -29,7 +29,8 @@ After installing it: **the window comes back the way you left it.**
 | --- | --- |
 | Position + size + maximized | All three are remembered, and the restored rectangle is clamped to the current display setup |
 | Restored before it shows | The helper applies the saved geometry around the moment the window is created, so you normally never see a small window grow |
-| Continuous recording, not on exit | Sampled every 700 ms; a resize is on disk immediately, so a hard kill or power loss does not lose it |
+| Event-driven, with a heartbeat fallback | Move / resize / maximize are written by WinEvent hooks the moment they happen, with a 2-second heartbeat covering anything a hook misses; a hard kill or power loss does not lose it |
+| Light resident footprint | Compiled helper: ~15 MB and 0% idle CPU (the PowerShell fallback uses ~70 MB) |
 | Off-screen protection | Unplugging a monitor or changing resolution never strands the window outside the visible area |
 | Readable state file | Plain JSON — inspect it, edit it, or delete it (deleting = reset) |
 | No system residue | No registry keys, no autostart entries, no service. One hidden helper process exists only while DSH runs |
@@ -133,7 +134,7 @@ Every field in the plugin row's `config` is optional:
 | --- | --- | --- |
 | `enabled` | `true` | `false` skips the helper entirely |
 | `stateFile` | `$DSH_HOME/desktop-window-state.json` | Custom state file location |
-| `intervalMs` | `700` | Sampling interval; minimum `200` |
+| `intervalMs` | `2000` | Heartbeat interval; window events are written immediately, this only catches what they miss. Minimum `500` |
 | `exeName` | `DeepSeek Harness.exe` | Target process image name, should the desktop app be renamed |
 | `titleHint` | `DeepSeek Harness` | Title substring used to score windows of that process |
 
@@ -148,7 +149,7 @@ Override a field in the profile's `cordis.patch.yml`:
 
 ## How it works
 
-### Why there is a small PowerShell helper
+### Why there is a small compiled helper
 
 The plugin runs inside `dsh-desktop-host`, the Node process the desktop shell spawns:
 
@@ -156,22 +157,26 @@ The plugin runs inside `dsh-desktop-host`, the Node process the desktop shell sp
 - the shell exposes no IPC that would resize one;
 - the `dshDesktop` API published by the preload script has nothing about window geometry either.
 
-So the Host half only does three things: decide whether this is the desktop app, spawn the helper, and reap it on unload. The actual window work happens through Win32, independent of the DSH version.
+So the Host half only does three things: decide whether this is the desktop app, prepare and spawn the helper, and reap it on unload. The actual window work happens through Win32, independent of the DSH version.
+
+The helper is written in C# (`helper/window-state.cs`). On first use the Host compiles it with the .NET Framework compiler that ships with Windows (`csc.exe`) and caches the result at `$DSH_HOME/window-state-helper.exe`; a newer source rebuilds it automatically. That keeps the resident process at roughly 15 MB with 0% idle CPU. When `csc.exe` is missing, the plugin falls back to `window-state.ps1` — a polling implementation that writes the same state file with the same semantics (at roughly 70 MB).
 
 ### The startup sequence
 
 ```text
 Electron main ──spawn──▶ dsh-desktop-host (the plugin loads here)
                               │
-                              ├─ apply() starts the hidden window-state.ps1
+                              ├─ apply() compiles (first run only) and starts window-state-helper.exe
                               │
 Electron creates the main window (hidden, 1280×820)
                               │
-helper sees the window ── SetWindowPos ──▶ applies the saved geometry (+ maximize if needed)
+helper fast-polls (100 ms) until it sees the window ── SetWindowPos ──▶ applies the saved geometry (+ maximize if needed)
                               │
 shell calls show(); what you see is the size you left
                               │
-sampled every 700 ms: position/size/maximized change → atomic write of the state file
+WinEvent hooks installed (scoped to the DSH process)
+   move / resize / maximize / show / hide ──▶ state file written immediately
+   anything a hook missed + a 2 s heartbeat ──▶ one catch-up sample
                               │
 window gone (quit) or plugin unloaded ──▶ helper exits
 ```
@@ -200,6 +205,7 @@ The close button only hides the window; the process stays alive. The rectangle i
 
 - **Windows x64 + DSH Desktop only.** CLI, headless and other platforms skip activation without starting anything.
 - **One restart after installation** before the plugin loads.
+- The first run compiles the helper with the in-box `csc.exe` (~100–300 ms, cached afterwards); without that compiler the plugin falls back to the PowerShell implementation.
 - On a very slow machine the helper may become ready after the window is shown, producing one quick resize (no data is lost).
 - Only the **main window** is managed. Platform sign-in pages, update dialogs and other auxiliary windows are not recorded.
 - Relies on the desktop shell's current process and window class names; if those change, override them with `config.exeName` / `config.titleHint`.
@@ -210,7 +216,7 @@ The close button only hides the window; the process stays alive. The rectangle i
 | Symptom | Check first |
 | --- | --- |
 | The window is not restored after a restart | Is the plugin switch on? Does `desktop-window-state.json` exist with a plausible `rect`? |
-| `savedAt` never changes | The helper is not running: confirm this is the desktop app (not a browser tab) and that security software is not blocking PowerShell |
+| `savedAt` never changes | The helper is not running: confirm this is the desktop app (not a browser tab); if `csc.exe` is missing, check that security software is not blocking PowerShell |
 | The window ends up off-screen | Delete the state file to reset; loading clamps to the virtual screen, so this should not happen normally |
 | The plugin is missing from the list | DSH needs a restart; confirm `dsh-window-state` is in the profile's `bundles` |
 
@@ -230,8 +236,10 @@ This project chooses: **scoped to the plugin lifecycle** (present while DSH runs
 dsh-window-state/
 ├── package.json         manifest: dsh.bundle.patch, exports, file list
 ├── cordis.patch.yml     inserts the plugin row (id: window-state)
-├── index.js             Host half: environment check, spawns/reaps the helper, reads config
-├── window-state.ps1     Win32 window read/write and state persistence (the real logic)
+├── index.js             Host half: environment check, compiles and starts the helper, reads config
+├── helper/
+│   └── window-state.cs  compiled helper: WinEvent hooks + heartbeat + Win32 window I/O
+├── window-state.ps1     PowerShell fallback (used when csc.exe is unavailable)
 ├── locale/
 │   ├── zh.json          plugin card copy (Chinese)
 │   └── en.json
