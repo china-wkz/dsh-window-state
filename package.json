@@ -1,0 +1,38 @@
+{
+  "name": "dsh-window-state",
+  "version": "0.1.0",
+  "description": "记住 DSH Desktop 主窗口的位置、尺寸与最大化状态，重开原样恢复 / Remembers the DeepSeek Harness desktop window geometry (position, size, maximized) and restores it on the next launch.",
+  "type": "module",
+  "license": "MIT",
+  "exports": {
+    ".": "./index.js",
+    "./locale/*.json": "./locale/*.json",
+    "./icon": "./icon.svg"
+  },
+  "files": [
+    "index.js",
+    "window-state.ps1",
+    "cordis.patch.yml",
+    "locale/*.json",
+    "icon.svg",
+    "README.md",
+    "LICENSE"
+  ],
+  "keywords": [
+    "dsh",
+    "dsh-plugin",
+    "deepseek-harness",
+    "window",
+    "bounds",
+    "geometry",
+    "desktop"
+  ],
+  "engines": {
+    "dsh": ">=0.2.2-rc.1"
+  },
+  "dsh": {
+    "bundle": {
+      "patch": "./cordis.patch.yml"
+    }
+  }
+}

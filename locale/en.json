@@ -1,0 +1,6 @@
+{
+  "meta": {
+    "title": "Window state memory",
+    "description": "Remembers the desktop window position, size, and maximized state, then restores them on the next launch."
+  }
+}
