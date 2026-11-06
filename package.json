@@ -24,7 +24,9 @@
     "locale/*.json",
     "icon.svg",
     "README.md",
-    "LICENSE"
+    "LICENSE",
+    "README.en.md",
+    "assets/icon-180.png"
   ],
   "keywords": [
     "dsh",

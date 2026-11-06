@@ -1,5 +1,7 @@
 # dsh-window-state
 
+[English](README.en.md) | **简体中文**
+
 > 记住 DSH Desktop 主窗口的位置、尺寸与最大化状态，下次启动原样恢复。
 
 Remember the DeepSeek Harness desktop window geometry (position, size, maximized) and restore it on the next launch.
@@ -236,7 +238,10 @@ dsh-window-state/
 │   ├── zh.json          插件卡片中文文案
 │   └── en.json
 ├── icon.svg             插件页图标
-├── README.md
+├── assets/
+│   └── icon-180.png     插件市场卡片图
+├── README.md            中文说明（本文件）
+├── README.en.md         English README
 └── LICENSE
 ```
 
@@ -262,19 +267,6 @@ node -e "for (const f of ['package.json','locale/zh.json','locale/en.json']) JSO
 '{"rect":{"x":320,"y":160,"width":1720,"height":1080},"maximized":false,"dpi":96,"savedAt":null}' |
   Set-Content "$env:USERPROFILE\.dsh\desktop-window-state.json" -Encoding utf8
 ```
-
-## English
-
-`dsh-window-state` remembers the DeepSeek Harness **desktop** window's position, size, and maximized state, and restores them on the next launch.
-
-- **Platform:** Windows x64, DSH Desktop ≥ 0.2.2-rc.1. The plugin does nothing in a browser tab, a CLI session, or a headless host.
-- **Install:** Settings → Plugins → Add plugin → install `dsh-window-state`, or `github:china-wkz/dsh-window-state` to install straight from this repository. Restart DSH once afterwards.
-- **How it works:** the Host half spawns a hidden PowerShell helper that talks to the window through Win32 (`GetWindowRect` / `SetWindowPos`). The saved geometry is applied before the shell shows the window, then sampled every 700 ms so even a hard kill leaves an up-to-date record.
-- **State:** `%USERPROFILE%\.dsh\desktop-window-state.json` (plain JSON). Delete it to reset.
-- **No residue:** no registry keys, no autostart entries, no services. The helper exists only while DSH runs.
-- **Optional config:** `enabled`, `stateFile`, `intervalMs`, `exeName`, `titleHint`.
-- **Manual test:** resize the window, quit DSH completely, reopen it — it should come back at the same size and place.
-- **License:** MIT.
 
 ## 许可
 
