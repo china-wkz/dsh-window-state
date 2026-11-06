@@ -44,6 +44,7 @@ new BrowserWindow({ width: 1280, height: 820, minWidth: 520, minHeight: 600, ...
 1. 打开 **设置 → 插件**；
 2. 点 **添加插件** → **安装第三方插件**；
 3. 在「包名或地址」里填入 `dsh-window-state`；
+   - 还没发布到 npm 时，改用 `github:china-wkz/dsh-window-state`，直接从仓库安装；
 4. 安装完成后 **重启 DSH**。
 
 ### 方式二：本地源码目录（开发调试）
@@ -267,7 +268,7 @@ node -e "for (const f of ['package.json','locale/zh.json','locale/en.json']) JSO
 `dsh-window-state` remembers the DeepSeek Harness **desktop** window's position, size, and maximized state, and restores them on the next launch.
 
 - **Platform:** Windows x64, DSH Desktop ≥ 0.2.2-rc.1. The plugin does nothing in a browser tab, a CLI session, or a headless host.
-- **Install:** Settings → Plugins → Add plugin → install `dsh-window-state`, then restart DSH once.
+- **Install:** Settings → Plugins → Add plugin → install `dsh-window-state`, or `github:china-wkz/dsh-window-state` to install straight from this repository. Restart DSH once afterwards.
 - **How it works:** the Host half spawns a hidden PowerShell helper that talks to the window through Win32 (`GetWindowRect` / `SetWindowPos`). The saved geometry is applied before the shell shows the window, then sampled every 700 ms so even a hard kill leaves an up-to-date record.
 - **State:** `%USERPROFILE%\.dsh\desktop-window-state.json` (plain JSON). Delete it to reset.
 - **No residue:** no registry keys, no autostart entries, no services. The helper exists only while DSH runs.
